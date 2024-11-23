@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	mathutil "com.sora/math"
+	mathutil "sora.com/math"
 )
 
 type Damage struct {
