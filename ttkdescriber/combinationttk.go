@@ -2,6 +2,7 @@ package ttkdescriber
 
 import (
 	"fmt"
+	"math"
 	"sort"
 
 	mathutil "sora.com/math"
@@ -72,7 +73,7 @@ func GenerateDamageRateMap(damage Damage) map[int]DamageRate {
 }
 
 func aggregateDamage(drm map[int]DamageRate, damage int, rate int, locationName string) {
-	if damage > 0 {
+	if damage > 0 && rate > 0 {
 		if v, ok := drm[damage]; ok {
 			v.location = v.location + "," + locationName
 			v.rate = v.rate + rate
@@ -101,10 +102,17 @@ func CalCombinationTTK(damage Damage) {
 
 	sort.Ints(damages)
 
-	var result [][]int
-	var combinations []int
+	// 确定所需命中数的边界
+	maxDamage := damages[len(damages)-1]
+	minCount := int(math.Ceil(float64(damage.health) / float64(maxDamage)))
+	minDamage := damages[0]
+	maxCount := int(math.Ceil(float64(damage.health) / float64(minDamage)))
 
-	damgeBacktrack(damages, 300, combinations, &result, 0)
+	var result [][]int
+
+	for i := minCount; i <= maxCount; i++ {
+		damageBacktrack(damage.health, damages, i, []int{}, 0, &result)
+	}
 
 	fmt.Printf("达成 %d 血的射击组合有 %d 种：\n", 300, len(result))
 
@@ -123,7 +131,7 @@ func CalCombinationTTK(damage Damage) {
 	}
 
 	fmt.Println("在指定命中部位概率的前提下，最终分析:")
-	var curRate float64 = 0
+	// var curRate float64 = 0
 	var keySet []int
 	for k, _ := range countMap {
 		keySet = append(keySet, k)
@@ -131,42 +139,46 @@ func CalCombinationTTK(damage Damage) {
 	sort.Ints(keySet)
 	for i := 0; i < len(keySet); i++ {
 		count := keySet[i]
+		rate := countMap[keySet[i]]
 
-		if i == len(keySet)-1 {
-			// 处理边界问题，最多所需子弹数下，100%击杀
-			curRate = 1
-		} else {
-			rate := countMap[keySet[i]]
-			curRate = (1 - curRate) * rate
-		}
-		displayRate := mathutil.Float64ToStr(curRate * 100)
+		displayRate := mathutil.Float64ToStr(rate * 100)
 		fmt.Printf("【%v】枪致死的概率为:【%v%%】, TTK:【%v】\n", count, displayRate, ttk(damage.firerate, count))
 	}
-
 }
 
-// backtrack 回溯找所有伤害组合
-func damgeBacktrack(damages []int, target int, combination []int, result *[][]int, start int) {
-	if target <= 0 {
-		// 如果总伤害量达标，则加入结果集
-		comb := make([]int, len(combination))
-		copy(comb, combination)
-		*result = append(*result, comb)
+// damageBacktrack 回溯查找所有伤害组合
+func damageBacktrack(health int, damages []int, n int, current []int, index int, results *[][]int) {
+	if len(current) == n {
+		sum := 0
+		for _, c := range current {
+			sum += c
+		}
+		if sum >= health {
+			combination := make([]int, len(current))
+			copy(combination, current)
+			*results = append(*results, combination)
+		}
 		return
 	}
-	for i := start; i < len(damages); i++ {
-		// 加入当前伤害量，并递归调用
-		combination = append(combination, damages[i])
-		damgeBacktrack(damages, target-damages[i], combination, result, i)
-		// 回溯，移除最后一个伤害值
-		combination = combination[:len(combination)-1]
+
+	for i := index; i < len(damages); i++ {
+		current = append(current, damages[i])
+		// 递归
+		damageBacktrack(health, damages, n, current, i, results)
+		// 回溯
+		current = current[:len(current)-1]
 	}
 }
 
+// 多项式
 func calRate(comb []int, drm map[int]DamageRate, totalRate int) float64 {
-	hitMap := make(map[int]int)
+	n := len(comb)
 
-	for _, damage := range comb {
+	var result float64 = float64(mathutil.Factorial(n))
+
+	hitMap := make(map[int]int)
+	for i := 0; i < n; i++ {
+		damage := comb[i]
 		if _, ok := hitMap[damage]; ok {
 			hitMap[damage] = hitMap[damage] + 1
 		} else {
@@ -174,33 +186,21 @@ func calRate(comb []int, drm map[int]DamageRate, totalRate int) float64 {
 		}
 	}
 
-	var damageSlice []int
-	for damage := range hitMap {
-		damageSlice = append(damageSlice, damage)
-	}
-	sort.Ints(damageSlice)
-
-	var hitComb float64 = 1
-	var totalComb float64
-	var total int = 0
-	for _, damage := range damageSlice {
-		hitCount := hitMap[damage]
-		hitComb = hitComb * mathutil.Combination(drm[damage].rate, hitCount)
-		total = total + drm[damage].rate
-		fmt.Printf("其中【%v】枪【%v】伤害部位【%v】\n", hitCount, damage, drm[damage].location)
+	for damage, hit := range hitMap {
+		ratio := float64(drm[damage].rate) / float64(totalRate)
+		result = result / float64(mathutil.Factorial(hit)) * math.Pow(ratio, float64(hit))
+		fmt.Printf("其中【%v】枪【%v】伤害部位【%v】\n", hit, damage, drm[damage].location)
 	}
 
-	totalComb = hitComb / mathutil.Combination(totalRate, len(comb))
-
-	fmt.Printf("总概率为: %v%%\n", mathutil.Float64ToStr(totalComb*100))
+	fmt.Printf("总概率为: %v%%\n", mathutil.Float64ToStr(result*100))
 	fmt.Println("--------------------")
 
-	return totalComb
+	return result
+
 }
 
 // ttk 计算时间（毫秒）
 func ttk(rpm int, count int) int {
-	// 计算ttk
 	ttkValue := 60 * 1000 * (count - 1) / rpm
 	return int(ttkValue)
 }
